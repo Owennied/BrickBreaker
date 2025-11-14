@@ -21,6 +21,33 @@ html,body{
 #shop button{margin-left:8px;padding:8px 12px;border-radius:6px;border:0;background:#2563eb;color:white;cursor:pointer}
 #shop button:active{transform:translateY(1px)}
 
+/* Buy dropdown */
+.buy-dropdown{display:inline-block;position:relative}
+.buy-dropdown > button{margin-left:0}
+.buy-menu{position:absolute;right:0;top:100%;margin-top:8px;background:rgba(3,7,18,0.95);border-radius:6px;padding:8px 12px;box-shadow:0 6px 20px rgba(0,0,0,0.5);display:none;z-index:20;min-width:260px}
+.buy-menu.show{display:block}
+.buy-menu .buy-opt{display:block;background:transparent;color:#dbeafe;border:0;padding:10px 12px;text-align:left;min-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.buy-menu .buy-opt:hover{background:rgba(255,255,255,0.04)}
+
+/* Help menu (ball descriptions) */
+.help-dropdown{display:inline-block;position:relative}
+.help-menu{position:absolute;left:0;top:100%;margin-top:8px;background:rgba(3,7,18,0.98);border-radius:6px;padding:12px;box-shadow:0 6px 30px rgba(0,0,0,0.6);display:none;z-index:25;min-width:320px;max-width:420px}
+.help-menu.show{display:block}
+.help-menu .help-item{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,0.03);color:#dbeafe}
+.help-menu .help-item:last-child{border-bottom:0}
+.help-menu .help-item .name{font-weight:700;margin-bottom:4px}
+.help-menu .help-close{display:block;margin-top:8px;padding:6px 10px;border-radius:6px;background:#2563eb;color:#fff;border:0;cursor:pointer}
+
+/* when there's not enough room below, show above the button */
+.help-menu.above{top:auto;bottom:100%;margin-top:0;margin-bottom:8px}
+
+/* fallback modal view centered in viewport when menu cannot fit as dropdown */
+.help-menu.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);min-width:280px;max-width:90vw;max-height:90vh;overflow:auto;border-radius:8px}
+
+/* backdrop for modal help */
+.help-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:24;display:none}
+.help-backdrop.show{display:block}
+
 #gameCanvas{
 	display:block;
 	margin:18px auto;
