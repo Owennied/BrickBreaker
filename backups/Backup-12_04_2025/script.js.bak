@@ -8,178 +8,12 @@
 	const ballsOwnedEl = document.getElementById('ballsOwned');
 	const buyBallBtn = document.getElementById('buyBall');
 	const buyBtn = document.getElementById('buyBtn');
-	const buyMenu = document.getElementById('buyMenu');
-	const resetBtn = document.getElementById('resetBtn');
 
-	// Hi-DPI scaling
-	function fitCanvas() {
-		const cssW = canvas.width;
-		const cssH = canvas.height;
-		// Cap DPR to avoid extremely large canvas sizes on high-DPI displays which
-		// can dramatically reduce rendering performance.
-		const rawDpr = Math.max(1, window.devicePixelRatio || 1);
-		const dpr = Math.min(rawDpr, 1.5);
-		canvas.width = cssW * dpr;
-		canvas.height = cssH * dpr;
-		canvas.style.width = cssW + 'px';
-		canvas.style.height = cssH + 'px';
-		ctx.setTransform(dpr,0,0,dpr,0,0);
-	}
-	fitCanvas();
-
-	// Game state
-	const START_MONEY = 0; // starting money to let player buy a ball
-	const START_BALL_PRICE = 10;
-	// maximum number of balls that can be active at once (adjustable)
-	const DEFAULT_MAX_ACTIVE_BALLS = 20;
-	let maxActiveBalls = DEFAULT_MAX_ACTIVE_BALLS;
-	let money = START_MONEY;
-	let gems = 0; // special currency awarded on rebirth
-	let rebirths = 0; // number of times player has rebirthed
-	let ballPrice = START_BALL_PRICE;
-	let ballsOwned = 0; // in inventory; release moves them into activeBalls
-	let level = 1; // current level
-    // Boss state (present on every 10th level)
-    let boss = null;
-    let bossTimer = 0;
-    const BOSS_TIME_LIMIT_BASE = 30; // seconds
-
-	const activeBalls = [];
-	const bricks = [];
-
-	const GAME = {
-		width: parseInt(canvas.style.width || canvas.width || 800, 10) || 800,
-		height: parseInt(canvas.style.height || canvas.height || 600, 10) || 600,
-	};
-
-	// Level transition state (controls fade overlay and pause)
-	const levelTransition = {
-		active: false,
-		start: 0,
-		duration: 1400, // ms total: fade-out + hold + fade-in
-		nextLevel: null,
-		fadeOut: 400,
-		hold: 600,
-		fadeIn: 400
-	};
-
-	let _nowTime = performance.now(); // updated in loop for draw/time-based effects
-
-	function startLevelTransition(nextLvl){
-		if(levelTransition.active) return;
-		levelTransition.active = true;
-		levelTransition.start = performance.now();
-		levelTransition.nextLevel = nextLvl;
-		// temporarily disable canvas clicks during transition
-		if(canvas) canvas.style.pointerEvents = 'none';
-	}
-
-	function finalizeLevelTransition(){
-		level = levelTransition.nextLevel || (level + 1);
-		initBricks(level);
-		// reposition active balls to center and reset velocities (reuse logic used previously)
-		try{
-			// remove scatter child balls on level complete so each level restarts clean
-			for(let i = activeBalls.length - 1; i >= 0; i--){
-				if(activeBalls[i] && activeBalls[i].isScatterChild){ activeBalls.splice(i,1); }
-			}
-			for(const b of activeBalls){
-				if(!b) continue;
-				b.x = GAME.width/2 + (Math.random()-0.5)*20;
-				b.y = GAME.height - 28;
-				let vx = (Math.random()-0.5)*1.2;
-				let vy = -3.5 - Math.random()*1.2;
-				// adjust per-type like spawnBall
-				switch(b.type){
-					case 'heavy':
-						b.r = 8; vx *= 0.6; vy *= 0.6; break;
-					case 'sniper':
-						b.r = 5; vx *= 1.1; vy *= 1.1; break;
-					default:
-						b.r = 6;
-				}
-				// convert to pixels-per-second for consistent dt integration
-				// convert to pps and apply speed upgrades multiplier once
-				b.vx = vx * 60; b.vy = vy * 60; b.alive = true;
-				try{ const sp = computeTypeSpeed(b.type); b.vx *= sp; b.vy *= sp; }catch(e){}
-				try{ b.damage = computeTypeDamage(b.type); }catch(e){}
-				// reset sniper state flags so they behave correctly on the new level
-				if(b.type === 'sniper'){
-					b.sniperCanRetarget = true;
-					b.sniperHitBrick = false;
-				}
-				// reset scatter-specific spawn counters so they can spawn children on the new level
-				if(b.type === 'scatter'){
-					b._lastScatterSpawn = 0;
-					b._scatterChildrenSpawned = 0;
-				}
-			}
-		}catch(e){ }
-		saveGame();
-		levelTransition.active = false;
-		levelTransition.nextLevel = null;
-		// re-enable canvas interaction
-		if(canvas) canvas.style.pointerEvents = '';
-	}
-
-	// Snow particle system for Christmas theme (drawn to full-window `snowCanvas`)
-	const snowParticles = [];
-	const snowCanvas = document.getElementById('snowCanvas');
-	const snowCtx = snowCanvas ? snowCanvas.getContext('2d') : null;
-
-	function fitSnowCanvas(){
-		if(!snowCanvas || !snowCtx) return;
-		const w = window.innerWidth;
-		const h = window.innerHeight;
-		const rawDpr = Math.max(1, window.devicePixelRatio || 1);
-		const dpr = Math.min(rawDpr, 1.5);
-		snowCanvas.width = Math.floor(w * dpr);
-		snowCanvas.height = Math.floor(h * dpr);
-		snowCanvas.style.width = w + 'px';
-		snowCanvas.style.height = h + 'px';
-		snowCtx.setTransform(dpr,0,0,dpr,0,0);
-	}
-
-	function initSnow(count = 80){
-		snowParticles.length = 0;
-		const w = (snowCanvas && snowCanvas.clientWidth) ? snowCanvas.clientWidth : window.innerWidth;
-		const h = (snowCanvas && snowCanvas.clientHeight) ? snowCanvas.clientHeight : window.innerHeight;
-		for(let i=0;i<count;i++){
-			// snowflake properties: position, size, fall speed, horizontal drift, rotation
-			const size = 1 + Math.random()*3.5;
-			snowParticles.push({
-				x: Math.random()*w,
-				y: Math.random()*h,
-				r: size,
-				speed: 10 + Math.random()*30 * (size/2),
-				drift: (Math.random()-0.5)*18,
-				angle: Math.random() * Math.PI * 2,
-				spin: (Math.random()-0.5) * 1.2,
-				alpha: 0.6 + Math.random()*0.4,
-				branches: 4 + (Math.random() > 0.7 ? 2 : 0) // 4 or 6 branches sometimes
-			});
-		}
-	}
-
-	// Initialize snow canvas sizing + particles
-	fitSnowCanvas();
-	initSnow(120);
-
-	// Brick layout
 	function initBricks(lvl = 1){
+		// reset bricks and boss state for the new level
 		bricks.length = 0;
 		boss = null;
 		bossTimer = 0;
-		// If this is a boss level (every 10th), create a single boss orb instead of normal bricks
-		if(lvl % 10 === 0){
-			// Make bosses much tougher: base 1000 HP per level, minimum 5000 HP
-			const bossHP = Math.max(5000, Math.round(1000 * lvl));
-			const r = Math.min(60, 28 + Math.floor(lvl/10)*6);
-			boss = { x: GAME.width/2, y: 140, r: r, value: bossHP, maxValue: bossHP, alive: true };
-			bossTimer = BOSS_TIME_LIMIT_BASE; // seconds
-			console.log('Boss level', lvl, 'spawned with HP', bossHP, 'time limit', bossTimer);
-			return;
-		}
 		// scale layout with level
 		const rows = Math.min(8, 4 + Math.floor((lvl-1)/1));
 		const cols = Math.min(12, 7 + Math.floor((lvl-1)/2));
@@ -508,14 +342,13 @@
 		const lvl = upgrades[type] || 0;
 		// click upgrades start cheaper now (was 100) — base cost for click is 20
 		const base = (type === 'click') ? 20 : 50;
-		// level factor: small linear increase per game level (keeps difficulty scaling)
+		// level factor: small linear increase per level
 		const levelFactor = 1 + (Math.max(0, level) * 0.03);
-		// exponential growth per existing upgrade level (per-type)
+		// money factor: logarithmic to avoid runaway but still scale with wealth
+		const moneyFactor = 1 + (Math.log10(1 + Math.max(0, money)) * 0.25);
+		// exponential growth per existing upgrade level
 		const growth = Math.pow(1.18, lvl);
-		// NOTE: remove dependency on player's current money so buying one upgrade
-		// does not change costs of other upgrades. Costs now depend only on
-		// the upgrade's own level and the global game level.
-		const cost = Math.ceil(base * growth * levelFactor);
+		const cost = Math.ceil(base * growth * levelFactor * moneyFactor);
 		return cost;
 	}
 	// We sum geometric growth starting at 1 with multiplier 1.25 (tunable).
@@ -1042,9 +875,6 @@
 		// reset level and recreate bricks (keep rebirth benefits and gems)
 		activeBalls.length = 0;
 		level = 1;
-		// clear boss state and any pending level transition so rebirth truly resets progression
-		try{ boss = null; bossTimer = 0; }catch(e){}
-		try{ levelTransition.active = false; levelTransition.nextLevel = null; levelTransition.start = 0; }catch(e){}
 		// reset money to starting amount on rebirth
 		try{ money = START_MONEY; }catch(e){ money = 0; }
 		initBricks(level);
@@ -1109,117 +939,152 @@
 			e.stopPropagation();
 			const isNow = settingsMenu.classList.toggle('show');
 			settingsMenu.setAttribute('aria-hidden', isNow ? 'false' : 'true');
-			// ensure other menus are closed
-			if(buyMenu && buyMenu.classList.contains('show')){ buyMenu.classList.remove('show'); buyMenu.setAttribute('aria-hidden','true'); }
-			if(upgradeMenu && upgradeMenu.classList.contains('show')){ upgradeMenu.classList.remove('show'); upgradeMenu.setAttribute('aria-hidden','true'); }
-			if(helpMenu && helpMenu.classList.contains('show')){ helpMenu.classList.remove('show'); helpMenu.setAttribute('aria-hidden','true'); }
-		});
-	}
+				// integrate velocities (velocities are pixels-per-second)
+				b.vy += gravity * dt;
+				// perform a small number of sub-steps proportional to movement distance to avoid tunneling
+				const moveX = b.vx * dt;
+				const moveY = b.vy * dt;
+				const moveDist = Math.hypot(moveX, moveY);
+				let steps = Math.ceil(moveDist / Math.max(1, b.r));
+				steps = Math.min(6, Math.max(1, steps));
+				const dtStep = dt / steps;
+				let collidedThisBall = false;
+				for(let s = 0; s < steps; s++){
+					// advance a small step
+					b.x += b.vx * dtStep;
+					b.y += b.vy * dtStep;
 
-	function releaseBalls(){
-		if(ballsOwned <= 0) return;
-		const n = ballsOwned;
-		for(let i=0;i<n;i++){
-			const spread = (i - (n-1)/2) * 3; // small horizontal spread
-			// convert initial per-frame velocity values to pixels-per-second (multiply by 60)
-			let rvx = ((Math.random()-0.5)*1.2 + spread*0.03) * 60;
-			let rvy = (-3.5 - Math.random()*1.2) * 60;
-			// apply standard speed upgrades
-			try{ const sp = computeTypeSpeed('standard'); rvx *= sp; rvy *= sp; }catch(e){}
-			activeBalls.push({
-				x: GAME.width/2 + spread,
-				y: GAME.height - 28,
-				vx: rvx,
-				vy: rvy,
-				r:6,
-				alive:true,
-				type: 'standard',
-				damage: computeTypeDamage('standard')
-			});
-		}
-		// ensure children flags unaffected; no extra work here
-		ballsOwned = 0;
-		updateUI();
-	}
+					// wall collisions (per-step)
+					if(b.x - b.r < 0){
+						b.x = b.r;
+						b.vx = -b.vx * bounce;
+						if(b.type === 'sniper'){
+							b.sniperCanRetarget = true;
+							b.sniperHitBrick = false;
+							if(boss && boss.alive){
+								const dx = (boss.x) - b.x;
+								const dy = (boss.y) - b.y;
+								const dist = Math.hypot(dx, dy) || 1;
+								const speed = Math.hypot(b.vx, b.vy) || 3.5;
+								b.vx = (dx/dist) * speed;
+								b.vy = (dy/dist) * speed;
+							}
+						}
+					if(b.x + b.r > GAME.width){
+						b.x = GAME.width - b.r;
+						b.vx = -b.vx * bounce;
+						if(b.type === 'sniper'){
+							b.sniperCanRetarget = true;
+							b.sniperHitBrick = false;
+							if(boss && boss.alive){
+								const dx = (boss.x) - b.x;
+								const dy = (boss.y) - b.y;
+								const dist = Math.hypot(dx, dy) || 1;
+								const speed = Math.hypot(b.vx, b.vy) || 3.5;
+								b.vx = (dx/dist) * speed;
+								b.vy = (dy/dist) * speed;
+							}
+						}
+					if(b.y - b.r < 0){
+						b.y = b.r;
+						b.vy = -b.vy * bounce;
+						if(b.type === 'sniper'){
+							b.sniperCanRetarget = true;
+							b.sniperHitBrick = false;
+							if(boss && boss.alive){
+								const dx = (boss.x) - b.x;
+								const dy = (boss.y) - b.y;
+								const dist = Math.hypot(dx, dy) || 1;
+								const speed = Math.hypot(b.vx, b.vy) || 3.5;
+								b.vx = (dx/dist) * speed;
+								b.vy = (dy/dist) * speed;
+							}
+						}
+					// floor
+					if(b.y + b.r > GAME.height){
+						b.y = GAME.height - b.r;
+						b.vy = -b.vy * bounce;
+					}
 
-	// helper to spawn a ball of a given type into the activeBalls array
-	// optional x,y allow placing the ball at a specific position
-function spawnBall(type = 'standard', x = null, y = null){
-		let vx = (Math.random()-0.5)*1.2;
-		let vy = -3.5 - Math.random()*1.2;
-		let r = 6;
-		// type-specific tweaks
-		switch(type){
-			case 'heavy':
-				r = 8;
-				vx *= 0.6;
-				vy *= 0.6;
-				break;
-			case 'sniper':
-				// sniper: smaller radius, slightly faster, will auto-target nearest brick
-				r = 5;
-				vx *= 1.1;
-				vy *= 1.1;
-				break;
-			default:
-				// standard
-		}
-		// convert to pixels-per-second (velocities were authored as per-frame values)
-		vx *= 60;
-		vy *= 60;
-		// apply speed upgrades multiplier
-		try{ const sp = computeTypeSpeed(type); vx *= sp; vy *= sp; }catch(e){}
+					// boss collision per-step
+					if(boss && boss.alive && !b.isScatterChild){
+						const dxB = b.x - boss.x;
+						const dyB = b.y - boss.y;
+						const dist2B = dxB*dxB + dyB*dyB;
+						const minDistB = (b.r || 0) + boss.r;
+						if(dist2B <= (minDistB * minDistB)){
+							const damage = (typeof b.damage === 'number' && b.damage > 0) ? b.damage : 1;
+							applyDamageToBoss(damage);
+							const distb = Math.sqrt(dist2B) || 0.0001;
+							const nxB = (b.x - boss.x) / distb;
+							const nyB = (b.y - boss.y) / distb;
+							const vdotB = (b.vx * nxB) + (b.vy * nyB);
+							let rxB = b.vx - 2 * vdotB * nxB;
+							let ryB = b.vy - 2 * vdotB * nyB;
+							const oldSpeedB = Math.hypot(b.vx, b.vy) || 4;
+							const newSpeedB = Math.hypot(rxB, ryB) || 0.0001;
+							rxB = (rxB / newSpeedB) * oldSpeedB;
+							ryB = (ryB / newSpeedB) * oldSpeedB;
+							const tangentNudgeB = (Math.random() - 0.5) * 0.25;
+							rxB += -nyB * tangentNudgeB;
+							ryB += nxB * tangentNudgeB;
+							b.vx = rxB * bounce;
+							b.vy = ryB * bounce;
+							const overlapB = Math.max(0, minDistB - distb);
+							const pushB = overlapB + 0.6;
+							b.x += nxB * pushB;
+							b.y += nyB * pushB;
+							// skip brick checks for this step after boss collision
+							continue;
+						}
+					}
 
-		// determine damage using centralized computation (includes baseDamage and scaled upgrades)
-		const damage = computeTypeDamage(type);
-		const ballObj = {
-			x: typeof x === 'number' ? x : (GAME.width/2 + (Math.random()-0.5)*20),
-			y: typeof y === 'number' ? y : (GAME.height - 28),
-			vx,
-			vy,
-			r,
-			alive:true,
-			type,
-			damage
-		};
-
-		// Scatter-specific: children bypass capacity; init last spawn timestamp
-		if(type === 'scatter'){
-			ballObj._lastScatterSpawn = 0;
-			// track how many mini-children this parent has produced
-			ballObj._scatterChildrenSpawned = 0;
-		}
-		// sniper-specific state: must hit a brick, then hit a wall to re-target
-		if(type === 'sniper'){
-			ballObj.sniperCanRetarget = true; // initially can target
-			ballObj.sniperHitBrick = false; // set true when it collides with a brick
-		}
-		activeBalls.push(ballObj);
-
-		return ballObj;
-	}
-
-	// Spawn smaller child balls for a scatter parent. Children bypass the active-ball
-	// capacity and are marked so they are destroyed at level transition.
-	function spawnScatterChildren(parent){
-		if(!parent) return;
-		const now = performance.now ? performance.now() : Date.now();
-		// prevent immediate repeated spawns from the same collision (cooldown 150ms)
-		if(parent._lastScatterSpawn && (now - parent._lastScatterSpawn) < 150) return;
-		const DEFAULT_SPAWN_COUNT = 2; // number of fragments to spawn per event
-		const MAX_CHILDREN_PER_PARENT = 10; // cap per scatter parent
-		// enforce per-parent cap (cumulative spawned children)
-		const spawnedSoFar = parent._scatterChildrenSpawned || 0;
-		const availableForParent = Math.max(0, MAX_CHILDREN_PER_PARENT - spawnedSoFar);
-		const toSpawn = Math.min(DEFAULT_SPAWN_COUNT, availableForParent);
-		if(toSpawn <= 0) return; // this parent already spawned its quota
-		const parentSpeed = Math.hypot(parent.vx || 0, parent.vy || 0) || 180;
-		const baseDamage = (typeof parent.damage === 'number') ? parent.damage : computeTypeDamage('scatter');
-		const childDamage = baseDamage * 0.25;
-		for(let k=0;k<toSpawn;k++){
-			// fully random direction for each child
+					// brick collisions per-step
+					let hitBrick = false;
+					for(let j=0;j<bricks.length;j++){
+						const br = bricks[j];
+						if(!br.alive) continue;
+						if(circleRectCollision(b, br)){
+							// compute nearest point on rect to ball center
+							const nearestX = Math.max(br.x, Math.min(b.x, br.x + br.w));
+							const nearestY = Math.max(br.y, Math.min(b.y, br.y + br.h));
+							let nx = b.x - nearestX;
+							let ny = b.y - nearestY;
+							let dist = Math.hypot(nx, ny) || 0.0001;
+							nx /= dist; ny /= dist;
+							const vdot = (b.vx * nx) + (b.vy * ny);
+							let rx = b.vx - 2 * vdot * nx;
+							let ry = b.vy - 2 * vdot * ny;
+							const oldSpeed = Math.hypot(b.vx, b.vy) || 4;
+							const newSpeed = Math.hypot(rx, ry) || 0.0001;
+							rx = (rx / newSpeed) * oldSpeed;
+							ry = (ry / newSpeed) * oldSpeed;
+							const tangentNudge = (Math.random() - 0.5) * 0.18;
+							rx += -ny * tangentNudge;
+							ry += nx * tangentNudge;
+							b.vx = rx * bounce;
+							b.vy = ry * bounce;
+							const penetration = Math.max(0, b.r - dist);
+							const push = penetration + 0.6;
+							b.x += nx * push;
+							b.y += ny * push;
+							const damage = (typeof b.damage === 'number' && b.damage > 0) ? b.damage : 1;
+							applyDamageToBrick(br, damage);
+							if(b && b.type === 'scatter') spawnScatterChildren(b);
+							if(b.type === 'sniper'){
+								b.sniperHitBrick = true;
+								b.sniperCanRetarget = false;
+							}
+							hitBrick = true;
+							break;
+						}
+					}
+					if(hitBrick){ collidedThisBall = true; break; }
+				}
+				// end sub-steps
+			// pick a fully random direction for each child so fragments scatter everywhere
 			const angle = Math.random() * Math.PI * 2;
-			const speed = parentSpeed * (0.6 + Math.random() * 0.6);
+			const speed = parentSpeed * (0.3 + Math.random()*0.6);
 			const vx = Math.cos(angle) * speed;
 			const vy = Math.sin(angle) * speed;
 			activeBalls.push({
@@ -1227,7 +1092,7 @@ function spawnBall(type = 'standard', x = null, y = null){
 				y: parent.y,
 				vx,
 				vy,
-				r: 3,
+				r: 4,
 				alive: true,
 				type: 'scatterChild',
 				damage: childDamage,
@@ -1444,8 +1309,7 @@ function spawnBall(type = 'standard', x = null, y = null){
 		for(let i = activeBalls.length-1; i>=0; i--){
 			const b = activeBalls[i];
 			// if boss exists and is alive, check circle-circle collision with balls first
-			// Allow scatter child balls to hit the boss as well.
-			if(boss && boss.alive && b){
+			if(boss && boss.alive && b && !b.isScatterChild){
 				const dx = b.x - boss.x;
 				const dy = b.y - boss.y;
 				const dist2 = dx*dx + dy*dy;
@@ -1573,26 +1437,47 @@ function spawnBall(type = 'standard', x = null, y = null){
 				const br = bricks[j];
 				if(!br.alive) continue;
 				if(circleRectCollision(b, br)){
-					// determine damage from this ball
+					// compute nearest point on rect to ball center
+					const nearestX = Math.max(br.x, Math.min(b.x, br.x + br.w));
+					const nearestY = Math.max(br.y, Math.min(b.y, br.y + br.h));
+					let nx = b.x - nearestX;
+					let ny = b.y - nearestY;
+					let dist = Math.hypot(nx, ny) || 0.0001;
+					// normal (pointing from rect toward ball)
+					nx /= dist; ny /= dist;
+					// reflect velocity across normal: r = v - 2*(v·n)*n
+					const vdot = (b.vx * nx) + (b.vy * ny);
+					let rx = b.vx - 2 * vdot * nx;
+					let ry = b.vy - 2 * vdot * ny;
+					// preserve speed magnitude
+					const oldSpeed = Math.hypot(b.vx, b.vy) || 4;
+					const newSpeed = Math.hypot(rx, ry) || 0.0001;
+					rx = (rx / newSpeed) * oldSpeed;
+					ry = (ry / newSpeed) * oldSpeed;
+					// small tangential nudge to avoid repeating perfect reflections
+					const tangentNudge = (Math.random() - 0.5) * 0.18;
+					rx += -ny * tangentNudge;
+					ry += nx * tangentNudge;
+					b.vx = rx * bounce;
+					b.vy = ry * bounce;
+
+					// push the ball out of the brick along the normal to resolve penetration
+					const penetration = Math.max(0, b.r - dist);
+					const push = penetration + 0.6; // extra padding
+					b.x += nx * push;
+					b.y += ny * push;
+
+					// apply damage from this ball to the brick
 					const damage = (typeof b.damage === 'number' && b.damage > 0) ? b.damage : 1;
-					// preserve ball speed but perturb direction slightly so balls keep moving
-					const speed = Math.hypot(b.vx, b.vy) || 4;
-					let angle = Math.atan2(b.vy, b.vx);
-					angle = -angle + (Math.random() - 0.5) * 0.3;
-					b.vx = Math.cos(angle) * speed;
-					b.vy = Math.sin(angle) * speed;
-					// apply damage (may be >1) and let helper manage awards & level progression
 					applyDamageToBrick(br, damage);
-						// scatter: spawn children on brick hit
-						if(b && b.type === 'scatter'){
-							spawnScatterChildren(b);
-						}
-					// sniper-specific rule: after hitting a brick, the sniper must hit a wall
-					// before it is allowed to retarget again
+					// spawn scatter children on brick hit
+					if(b && b.type === 'scatter') spawnScatterChildren(b);
+					// sniper-specific: require wall hit before retargeting again
 					if(b.type === 'sniper'){
 						b.sniperHitBrick = true;
 						b.sniperCanRetarget = false;
 					}
+					// stop checking other bricks for this ball this frame
 					break;
 				}
 			}
