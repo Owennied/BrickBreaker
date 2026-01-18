@@ -1,7 +1,7 @@
 // Brick Breaker with a shop: buy balls, release them to break bricks and earn money.
 (() => {
-	const canvas = document.getElementById('gameCanvas');
-	const ctx = canvas.getContext('2d');
+	let canvas = document.getElementById('gameCanvas');
+	let ctx = canvas.getContext('2d');
 
 	// UI elements
 	const moneyEl = document.getElementById('money');
@@ -10,6 +10,7 @@
 	const buyBtn = document.getElementById('buyBtn');
 	const buyMenu = document.getElementById('buyMenu');
 	const resetBtn = document.getElementById('resetBtn');
+    const soundToggleBtn = document.getElementById('soundToggle');
 
 	// Hi-DPI scaling
 	function fitCanvas() {
@@ -43,6 +44,9 @@
     let boss = null;
     let bossTimer = 0;
     const BOSS_TIME_LIMIT_BASE = 30; // seconds
+	// admin override: force 100% crit chance (initialized from localStorage if present)
+	let adminForceFullCrit = false;
+	try{ adminForceFullCrit = !!(localStorage.getItem && localStorage.getItem('bb-admin-forceCrit') === '1'); }catch(e){ adminForceFullCrit = false; }
 
 	const activeBalls = [];
 	const bricks = [];
@@ -124,8 +128,63 @@
 
 	// Snow particle system for Christmas theme (drawn to full-window `snowCanvas`)
 	const snowParticles = [];
+	// temporary cartoon crit bubbles shown on critical hits
+	const critBubbles = [];
 	const snowCanvas = document.getElementById('snowCanvas');
 	const snowCtx = snowCanvas ? snowCanvas.getContext('2d') : null;
+
+	function spawnCritBubble(x,y){
+		const texts = ['Boom!','Pow!','Bang!'];
+		const text = texts[Math.floor(Math.random()*texts.length)];
+		critBubbles.push({ x, y, text, t:0, ttl:0.9, vy: -40 - Math.random()*20, scale: 1 + Math.random()*0.25, rot: (Math.random()-0.5)*0.25 });
+	}
+
+	// Sound system: defaults to off. Expose simple API on window._sounds
+	let soundsEnabled = false;
+	let _audioCtx = null;
+	function ensureAudioContext(){
+		try{
+			if(!_audioCtx){
+				_audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+			}
+			if(_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume().catch(()=>{});
+			return _audioCtx;
+		}catch(e){ return null; }
+	}
+
+	function playTone(freq = 440, type='sine', duration = 0.08, vol = 0.08){
+		if(!soundsEnabled) return;
+		const ac = ensureAudioContext();
+		if(!ac) return;
+		const o = ac.createOscillator();
+		const g = ac.createGain();
+		o.type = type;
+		o.frequency.value = freq;
+		g.gain.value = vol;
+		o.connect(g); g.connect(ac.destination);
+		const now = ac.currentTime;
+		g.gain.setValueAtTime(vol, now);
+		g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+		o.start(now);
+		o.stop(now + duration + 0.02);
+	}
+
+	window._sounds = {
+		enabled: ()=> soundsEnabled,
+		setEnabled: (v)=>{ soundsEnabled = !!v; try{ localStorage.setItem('bb-sounds', soundsEnabled ? '1' : '0'); }catch(e){} },
+		playHit: (strength = 1)=>{
+			if(!soundsEnabled) return;
+			// map strength to frequency and type
+			const s = Math.min(1, Math.max(0.05, Math.abs(strength) / 50));
+			const freq = 300 + s * 1200 + (Math.random()-0.5)*40;
+			const type = (s > 0.6) ? 'square' : ((s > 0.25) ? 'sawtooth' : 'sine');
+			playTone(freq, type, 0.08 + s*0.12, 0.06 + s*0.06);
+		}
+	};
+
+	// restore sound preference (default off)
+	try{ soundsEnabled = !!(localStorage.getItem && localStorage.getItem('bb-sounds') === '1'); }catch(e){ soundsEnabled = false; }
+
 
 	function fitSnowCanvas(){
 		if(!snowCanvas || !snowCtx) return;
@@ -164,6 +223,24 @@
 	// Initialize snow canvas sizing + particles
 	fitSnowCanvas();
 	initSnow(120);
+
+	// wire up sound toggle UI (settings menu button)
+	function updateSoundToggleUI(){
+		if(!soundToggleBtn) return;
+		soundToggleBtn.textContent = `Sounds: ${soundsEnabled ? 'On' : 'Off'}`;
+	}
+	updateSoundToggleUI();
+	if(soundToggleBtn){
+		soundToggleBtn.addEventListener('click', (e)=>{
+			e.stopPropagation();
+			// toggle and persist
+			soundsEnabled = !soundsEnabled;
+			try{ localStorage.setItem('bb-sounds', soundsEnabled ? '1' : '0'); }catch(e){}
+			// create/resume audio ctx on enable so audio will play after user gesture
+			if(soundsEnabled) try{ ensureAudioContext(); }catch(e){}
+			updateSoundToggleUI();
+		});
+	}
 
 	// Brick layout
 	function initBricks(lvl = 1){
@@ -297,10 +374,20 @@
 	// returns the total awarded amount
 	function applyDamageToBrick(br, dmg){
 		if(!br || !br.alive) return 0;
-		const amount = Math.min(dmg, Math.max(0, br.value));
+		// critical hit calculation (permanent gem stacks)
+		const critStacks = (purchases['crit'] || 0);
+		const critChance = Math.min(0.5, (critStacks * 0.05)); // cap 50%
+		let isCrit = false;
+		if(adminForceFullCrit){ isCrit = true; }
+		else if(critStacks > 0 && Math.random() < critChance){ isCrit = true; }
+		let amount = Math.min(dmg, Math.max(0, br.value));
+		if(isCrit){ amount = Math.min(dmg * 2, Math.max(0, br.value)); }
 		if(amount <= 0) return 0;
 		br.value = Math.max(0, br.value - amount);
 		money += amount;
+		// play hit sound if enabled
+		try{ if(window._sounds && window._sounds.playHit) window._sounds.playHit(amount * (isCrit ? 1.5 : 1)); }catch(e){}
+		if(isCrit){ showToast('Critical Hit!'); try{ spawnCritBubble(br.x + br.w/2, br.y + br.h/2); }catch(e){} }
 		updateUI();
 		saveGame();
 		if(br.value <= 0){
@@ -315,10 +402,19 @@
 
 	function applyDamageToBoss(dmg){
 		if(!boss || !boss.alive) return 0;
-		const amount = Math.min(dmg, Math.max(0, boss.value));
+		const critStacks = (purchases['crit'] || 0);
+		const critChance = Math.min(0.5, (critStacks * 0.05));
+		let isCrit = false;
+		if(adminForceFullCrit){ isCrit = true; }
+		else if(critStacks > 0 && Math.random() < critChance){ isCrit = true; }
+		let amount = Math.min(dmg, Math.max(0, boss.value));
+		if(isCrit){ amount = Math.min(dmg * 2, Math.max(0, boss.value)); }
 		if(amount <= 0) return 0;
 		boss.value = Math.max(0, boss.value - amount);
 		money += amount;
+		// play hit sound if enabled (boss hits may be deeper)
+		try{ if(window._sounds && window._sounds.playHit) window._sounds.playHit(amount * (isCrit ? 1.5 : 1)); }catch(e){}
+		if(isCrit){ showToast('Critical Hit!'); try{ spawnCritBubble(boss.x, boss.y); }catch(e){} }
 		updateUI();
 		saveGame();
 		if(boss.value <= 0){
@@ -568,8 +664,17 @@
 
 	if(buyBtn && buyMenu){
 	// --- Gem shop items & UI ---
-	// NOTE: gem shop item list intentionally empty (no purchasable gem upgrades).
-	const gemShopItems = [];
+	// Gem shop items (permanent upgrades and consumables purchasable with gems)
+	const gemShopItems = [
+		{
+			id: 'crit',
+			name: 'Critical Hits',
+			cost: 12,
+			type: 'permanent',
+			maxStacks: 5,
+			desc: 'Each level grants +5% chance for balls to deal double damage.'
+		}
+	];
 
 	const gemBtn = document.getElementById('gemBtn');
 	const gemMenu = document.getElementById('gemMenu');
@@ -587,17 +692,18 @@
 		}
 		let html = gemShopItems.map(it => {
 			const owned = purchases[it.id] || 0;
+			const curCost = (it.id === 'crit' && owned === 0) ? 3 : it.cost;
 			let meta = '';
 			if(it.type === 'permanent') meta = `Owned: ${owned}/${it.maxStacks || '∞'}`;
 			if(it.type === 'consumable') meta = `Held: ${owned}`;
 			if(it.type === 'cosmetic') meta = owned ? 'Owned' : '';
-			const buyLabel = (it.type === 'consumable' && owned > 0) ? `Buy More ($${it.cost})` : `Buy ($${it.cost})`;
+			const buyLabel = (it.type === 'consumable' && owned > 0) ? `Buy More ($${curCost})` : `Buy ($${curCost})`;
 			const useBtn = (it.type === 'consumable' && owned > 0) ? `<button class="gem-use" data-id="${it.id}">Use</button>` : '';
 			return `
 				<div class="gem-item" data-id="${it.id}">
 					<div class="gem-meta"><strong>${it.name}</strong><div style="font-size:11px;color:#cfe8ff;margin-top:4px">${it.desc} ${meta ? '<span style="margin-left:8px">' + meta + '</span>' : ''}</div></div>
 					<div class="gem-actions">
-						<button class="gem-buy" data-id="${it.id}" data-cost="${it.cost}">${buyLabel}</button>
+							<button class="gem-buy" data-id="${it.id}" data-cost="${curCost}">${buyLabel}</button>
 						${useBtn}
 					</div>
 				</div>`;
@@ -633,13 +739,36 @@
 	}
 
 	function purchaseGemItem(id){
-		// Gem shop is currently empty; purchases are disabled.
-		alert('No gem shop items are available to purchase.');
+			const it = gemShopItems.find(x => x.id === id);
+			if(!it){ alert('Item not found'); return; }
+			const cur = purchases[id] || 0;
+			if(it.type === 'permanent' && typeof it.maxStacks === 'number' && cur >= it.maxStacks){
+				alert('Already at max stacks for ' + it.name);
+				return;
+			}
+			// allow special first-stack pricing for crit
+			const curCost = (it.id === 'crit' && cur === 0) ? 3 : it.cost;
+			if(gems < curCost){
+				// show feedback
+				showToast(`Not enough gems (need ${curCost})`, 2000);
+				return;
+			}
+			// deduct and apply
+			gems -= curCost;
+			purchases[id] = (purchases[id] || 0) + 1;
+			saveGame(); updateUI(); renderGemMenu();
+			showToast(`Purchased ${it.name}`);
 	}
 
 	function useGemItem(id){
-		// No consumables available
-		alert('No gem consumables available to use.');
+		const it = gemShopItems.find(x => x.id === id);
+		if(!it){ alert('Item not found'); return; }
+		if(it.type !== 'consumable'){ alert('This item is not a consumable.'); return; }
+		const cur = purchases[id] || 0;
+		if(cur <= 0){ alert('No items owned'); return; }
+		// implement consumable effects here as needed
+		purchases[id] = cur - 1;
+		saveGame(); renderGemMenu(); updateUI();
 	}
 
 		function renderBuyMenu(){
@@ -917,6 +1046,7 @@
 		const adminMoney = document.getElementById('adminMoney');
 		const adminLevel = document.getElementById('adminLevel');
 		const adminMaxBalls = document.getElementById('adminMaxBalls');
+		const adminForceCritEl = document.getElementById('adminForceCrit');
 
 		// open password modal
 		if(adminBtn && adminModal){
@@ -943,6 +1073,7 @@
 			if(adminMoney) adminMoney.value = money;
 			if(adminLevel) adminLevel.value = level;
 			if(adminMaxBalls) adminMaxBalls.value = maxActiveBalls;
+			if(adminForceCritEl) adminForceCritEl.checked = !!adminForceFullCrit;
 		}
 
 		if(adminPassClose) adminPassClose.addEventListener('click', closeAdminModal);
@@ -985,6 +1116,14 @@
 				maxActiveBalls = v;
 				saveGame(); updateUI();
 				alert('Max active balls set to ' + maxActiveBalls);
+			});
+		}
+
+		if(adminForceCritEl){
+			adminForceCritEl.addEventListener('change', ()=>{
+				adminForceFullCrit = !!adminForceCritEl.checked;
+				try{ localStorage.setItem('bb-admin-forceCrit', adminForceFullCrit ? '1' : '0'); }catch(e){}
+				showToast('100% Crit ' + (adminForceFullCrit ? 'Enabled' : 'Disabled'));
 			});
 		}
 
@@ -1065,8 +1204,22 @@
 	// wire rebirth button if present
 	const rebirthBtn = document.getElementById('rebirthBtn');
 	if(rebirthBtn){
+		// remember original background to restore after error flash
+		let _origRebirthBg = rebirthBtn.style.background || window.getComputedStyle(rebirthBtn).background;
+		let _origRebirthBox = rebirthBtn.style.boxShadow || window.getComputedStyle(rebirthBtn).boxShadow;
+
 		rebirthBtn.addEventListener('click', ()=>{
-			doRebirth();
+			if(canRebirth()){
+				doRebirth();
+			} else {
+				// visual feedback: shake and flash red
+				rebirthBtn.classList.add('shake');
+				try{ rebirthBtn.style.background = '#ef4444'; rebirthBtn.style.boxShadow = '0 6px 18px rgba(239,68,68,0.25)'; }catch(e){}
+				setTimeout(()=>{ try{ rebirthBtn.classList.remove('shake'); }catch(e){} }, 420);
+				setTimeout(()=>{ try{ rebirthBtn.style.background = _origRebirthBg; rebirthBtn.style.boxShadow = _origRebirthBox; }catch(e){} }, 700);
+				// optional audio feedback
+				try{ if(window._sounds && window._sounds.setEnabled && window._sounds.enabled && !window._sounds.enabled()){} }catch(e){}
+			}
 			// update button label to reflect cost (in case things changed)
 			rebirthBtn.textContent = `Rebirth ($${REBIRTH_COST})`;
 		});
@@ -1115,6 +1268,88 @@
 			if(helpMenu && helpMenu.classList.contains('show')){ helpMenu.classList.remove('show'); helpMenu.setAttribute('aria-hidden','true'); }
 		});
 	}
+
+// Theme handling: cycle and persist theme choice
+(function(){
+	const themeBtn = document.getElementById('themeBtn');
+	const themeLabel = document.getElementById('themeLabel');
+	const available = ['christmas','dark','retro'];
+	function applyTheme(t){
+		const theme = t; // explicit theme name (e.g., 'christmas', 'dark')
+		try{ if(theme) document.body.setAttribute('data-theme', theme); else document.body.removeAttribute('data-theme'); }catch(e){}
+		try{ localStorage.setItem('bb-theme', t); }catch(e){}
+		if(themeLabel) themeLabel.textContent = (t === 'christmas') ? 'Christmas' : (t.charAt(0).toUpperCase() + t.slice(1));
+		// Show snow only for the Christmas theme. When enabling, fit/init
+		// the snow canvas; when disabling, clear the particles and hide the canvas.
+		try{
+			if(typeof snowCanvas !== 'undefined' && snowCanvas){
+				if(t === 'christmas'){
+					snowCanvas.style.display = 'block';
+					fitSnowCanvas();
+					if(Array.isArray(snowParticles) && snowParticles.length === 0) initSnow(120);
+				} else {
+					snowCanvas.style.display = 'none';
+					if(snowCtx && snowCanvas) snowCtx.clearRect(0,0,snowCanvas.clientWidth || 0, snowCanvas.clientHeight || 0);
+					if(Array.isArray(snowParticles)) snowParticles.length = 0;
+				}
+			}
+		}catch(e){}
+	}
+	// initialize (default to 'dark')
+	try{
+		const saved = (localStorage.getItem && localStorage.getItem('bb-theme')) || 'dark';
+		applyTheme(saved);
+	}catch(e){ applyTheme('dark'); }
+	if(themeBtn){
+		// open centered theme modal instead of cycling
+		themeBtn.addEventListener('click', (e)=>{
+			e.stopPropagation();
+			const modal = document.getElementById('themeModal');
+			const opts = document.getElementById('themeOptions');
+			if(!modal || !opts) return;
+			// render options
+			opts.innerHTML = '';
+			available.forEach(t => {
+				const label = (t === 'dark') ? 'Dark (Default)' : (t.charAt(0).toUpperCase() + t.slice(1));
+				const btn = document.createElement('button');
+				btn.textContent = label;
+				btn.style.padding = '10px 12px';
+				btn.style.borderRadius = '8px';
+				btn.style.border = '0';
+				btn.style.cursor = 'pointer';
+				btn.style.textAlign = 'left';
+				btn.dataset.theme = t;
+				// highlight current
+				const cur = (localStorage.getItem && localStorage.getItem('bb-theme')) || 'default';
+				if(cur === t){ btn.style.outline = '2px solid rgba(255,255,255,0.08)'; }
+				btn.addEventListener('click', ()=>{ applyTheme(t); closeThemeModal(); });
+				opts.appendChild(btn);
+			});
+			// show modal
+			modal.style.display = 'flex';
+			modal.setAttribute('aria-hidden', 'false');
+		});
+	}
+
+	// Theme modal close handling
+	function closeThemeModal(){
+		const modal = document.getElementById('themeModal');
+		if(!modal) return;
+		modal.style.display = 'none';
+		modal.setAttribute('aria-hidden','true');
+	}
+	const themeClose = document.getElementById('themeClose');
+	if(themeClose) themeClose.addEventListener('click', closeThemeModal);
+	// close modal when clicking backdrop
+	const themeModal = document.getElementById('themeModal');
+	if(themeModal){
+		themeModal.addEventListener('click', (ev)=>{
+			if(ev.target === themeModal) closeThemeModal();
+		});
+	}
+	// escape key closes modal
+	window.addEventListener('keydown', (ev)=>{ if(ev.key === 'Escape') closeThemeModal(); });
+})();
 
 	function releaseBalls(){
 		if(ballsOwned <= 0) return;
@@ -1440,6 +1675,15 @@ function spawnBall(type = 'standard', x = null, y = null){
 			if(p.x < -10) p.x = sw + 10;
 			if(p.x > sw + 10) p.x = -10;
 		}
+		// update crit bubbles
+		for(let i = critBubbles.length - 1; i >= 0; i--){
+			const cb = critBubbles[i];
+			cb.t += dt;
+			cb.y += cb.vy * dt;
+			// slight upward deceleration
+			cb.vy += 40 * dt;
+			if(cb.t >= cb.ttl) critBubbles.splice(i,1);
+		}
 		// update balls
 		for(let i = activeBalls.length-1; i>=0; i--){
 			const b = activeBalls[i];
@@ -1715,6 +1959,41 @@ function spawnBall(type = 'standard', x = null, y = null){
 		// reset text alignment to default
 		ctx.textAlign = 'start';
 
+		// draw crit bubbles (cartoon cloud + bold text)
+		for(const cb of critBubbles){
+			const life = Math.max(0, 1 - (cb.t / cb.ttl));
+			const alpha = Math.min(1, life*1.2);
+			const sx = cb.x;
+			const sy = cb.y;
+			ctx.save();
+			ctx.globalAlpha = alpha;
+			ctx.translate(sx, sy);
+			ctx.rotate(cb.rot || 0);
+			ctx.scale(cb.scale || 1, cb.scale || 1);
+			// draw cloud using several circles
+			ctx.fillStyle = '#ffffff';
+			ctx.strokeStyle = '#111';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.arc(-28, 6, 12, 0, Math.PI*2);
+			ctx.arc(-8, -4, 16, 0, Math.PI*2);
+			ctx.arc(12, 6, 12, 0, Math.PI*2);
+			ctx.arc(-2, 10, 14, 0, Math.PI*2);
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+			// text: stroked outline then fill for maximum contrast over the cloud
+			ctx.font = 'bold 16px system-ui,Segoe UI,Roboto';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.lineWidth = 4;
+			ctx.strokeStyle = '#ffffff';
+			ctx.strokeText(cb.text, 0, 2);
+			ctx.fillStyle = '#111';
+			ctx.fillText(cb.text, 0, 2);
+			ctx.restore();
+		}
+
 		// Draw level transition overlay if active
 		if(levelTransition.active){
 			const elapsed = Math.max(0, _nowTime - levelTransition.start);
@@ -1869,37 +2148,135 @@ function spawnBall(type = 'standard', x = null, y = null){
 	let _bgInterval = null;
 	let _bgLast = 0;
 	let _bgLastSave = 0;
+	let _bgWorker = null;
+	let _renderWorker = null;
+	let _renderingInWorker = false;
+
+	function createRenderSnapshot(){
+		// build a lightweight snapshot of visible state for the render worker
+		try{
+			return {
+				game: { width: GAME.width, height: GAME.height, level },
+				boss: boss ? { x: boss.x, y: boss.y, r: boss.r, alive: !!boss.alive, value: boss.value } : null,
+				bricks: bricks.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h, alive: !!b.alive, value: b.value })),
+				balls: activeBalls.map(b => ({ x: b.x, y: b.y, r: b.r, type: b.type || 'standard', isScatterChild: !!b.isScatterChild }))
+			};
+		}catch(e){ return null; }
+	}
 	function startBackgroundGame(){
-		if(_bgInterval) return;
-		_bgLast = performance.now();
-		_bgLastSave = _bgLast;
-		// run at ~5 FPS while hidden to conserve CPU but keep progress
-		_bgInterval = setInterval(()=>{
-			const now = performance.now();
-			const dt = Math.max(0.016, (now - _bgLast)/1000);
-			_bgLast = now;
-			lastActivityTime = now;
-			try{
-				// update parts of the game (snow/draw included)
-				if(typeof updateSnow === 'function') updateSnow(dt);
-				update(dt);
-				if(typeof drawSnow === 'function') drawSnow();
-				draw();
-				// finalize transitions if needed
-				if(levelTransition && levelTransition.active){
-					const elapsed = now - levelTransition.start;
-					if(elapsed >= levelTransition.duration){ finalizeLevelTransition(); }
+		// If a Worker is available, use it for background ticks (less likely to be throttled).
+		if(_bgWorker) return;
+		_bgLastSave = performance.now();
+		try{
+			_bgWorker = new Worker('gameWorker.js');
+			_bgWorker.onmessage = (ev) => {
+				if(!ev || !ev.data) return;
+				const d = ev.data;
+				if(d.type === 'tick'){
+					const dt = Math.max(0.016, d.dt);
+					lastActivityTime = performance.now();
+					try{
+						if(typeof updateSnow === 'function') updateSnow(dt);
+						update(dt);
+						if(typeof drawSnow === 'function') drawSnow();
+						// if a render worker is active, send a lightweight state snapshot to it
+						if(_renderWorker){
+							const snap = createRenderSnapshot();
+							try{ _renderWorker.postMessage({type:'state', state: snap}); }catch(e){}
+						} else {
+							draw();
+						}
+						if(levelTransition && levelTransition.active){
+							const elapsed = performance.now() - levelTransition.start;
+							if(elapsed >= levelTransition.duration) finalizeLevelTransition();
+						}
+					}catch(e){}
+					if(performance.now() - _bgLastSave >= 5000){ saveGame(); _bgLastSave = performance.now(); }
 				}
-			}catch(e){}
-			// periodic save every 5s
-			if(now - _bgLastSave >= 5000){ saveGame(); _bgLastSave = now; }
-		}, 200);
+			};
+		}catch(e){
+			// fallback to interval if Worker cannot be created
+			_bgInterval = setInterval(()=>{
+				const now = performance.now();
+				const dt = Math.max(0.016, (now - _bgLast)/1000);
+				_bgLast = now;
+				lastActivityTime = now;
+				try{
+					if(typeof updateSnow === 'function') updateSnow(dt);
+					update(dt);
+					if(typeof drawSnow === 'function') drawSnow();
+					draw();
+					if(levelTransition && levelTransition.active){
+						const elapsed = now - levelTransition.start;
+						if(elapsed >= levelTransition.duration){ finalizeLevelTransition(); }
+					}
+				}catch(e){}
+				if(now - _bgLastSave >= 5000){ saveGame(); _bgLastSave = now; }
+			}, 200);
+		}
 	}
 
 	function stopBackgroundGame(){
-		if(!_bgInterval) return;
-		clearInterval(_bgInterval);
-		_bgInterval = null;
+		if(_bgWorker){
+			try{ _bgWorker.postMessage({type:'stop'}); }catch(e){}
+			try{ _bgWorker.terminate(); }catch(e){}
+			_bgWorker = null;
+		}
+		if(_bgInterval){
+			clearInterval(_bgInterval);
+			_bgInterval = null;
+		}
+	}
+
+	// Render worker control: transfer the DOM canvas to a render worker when hidden
+	function startRenderWorker(){
+		if(_renderWorker || !_bgWorker) return;
+		// Only proceed if OffscreenCanvas transfer is supported
+		if(!canvas || typeof canvas.transferControlToOffscreen !== 'function') return;
+		let w = null;
+		try{
+			// create worker first so we don't transfer the DOM canvas unless worker creation succeeds
+			w = new Worker('renderWorker.js');
+		}catch(e){
+			w = null;
+		}
+		if(!w) return; // cannot create worker (e.g., file://) — abort
+		try{
+			const off = canvas.transferControlToOffscreen();
+			w.postMessage({type:'init', canvas: off, width: GAME.width, height: GAME.height}, [off]);
+			_renderWorker = w;
+			_renderingInWorker = true;
+		}catch(e){
+			// if transfer failed, terminate worker and fall back
+			try{ w.terminate(); }catch(_){ }
+			_renderWorker = null;
+			_renderingInWorker = false;
+			// leave canvas intact; nothing else to do
+		}
+	}
+
+	function stopRenderWorker(){
+		if(!_renderWorker) return;
+		try{ _renderWorker.postMessage({type:'stop'}); }catch(e){}
+		try{ _renderWorker.terminate(); }catch(e){}
+		_renderWorker = null;
+		_renderingInWorker = false;
+		// recreate the DOM canvas since it was transferred
+		try{
+			const old = document.getElementById('gameCanvas');
+			if(old && old.parentNode){
+				const parent = old.parentNode;
+				const newCanvas = document.createElement('canvas');
+				newCanvas.id = 'gameCanvas';
+				newCanvas.width = GAME.width;
+				newCanvas.height = GAME.height;
+				newCanvas.setAttribute('aria-label','Brick breaker game canvas');
+				parent.replaceChild(newCanvas, old);
+				canvas = newCanvas;
+				ctx = canvas.getContext('2d');
+				fitCanvas();
+			}
+		}catch(e){}
 	}
 
 	// Remove offline earning config — earnings while hidden are disabled
@@ -1934,11 +2311,15 @@ function spawnBall(type = 'standard', x = null, y = null){
 				saveGame();
 				startBackgroundSnow();
 				startBackgroundGame();
+				// attempt to move rendering to worker so visuals continue while hidden
+				startRenderWorker();
 				hiddenStart = now;
 			} else {
 				// stop background loops
 				stopBackgroundSnow();
 				stopBackgroundGame();
+				// stop render worker and recreate canvas so main-thread rendering resumes
+				stopRenderWorker();
 				// no passive earnings while hidden — just resume visual/background loops
 				if(hiddenStart){ /* noop */ }
 				hiddenStart = null;

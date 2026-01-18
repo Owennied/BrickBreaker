@@ -48,6 +48,7 @@
 									<div style="margin-bottom:8px">Money: <input id="adminMoney" type="number" style="width:120px;padding:6px;border-radius:6px;border:0;background:rgba(255,255,255,0.03);color:#fff" /></div>
 									<div style="margin-bottom:8px">Level: <input id="adminLevel" type="number" style="width:80px;padding:6px;border-radius:6px;border:0;background:rgba(255,255,255,0.03);color:#fff" /></div>
 									<div style="margin-bottom:8px">Max Balls: <input id="adminMaxBalls" type="number" style="width:80px;padding:6px;border-radius:6px;border:0;background:rgba(255,255,255,0.03);color:#fff" /></div>
+									<div style="margin-bottom:8px">Force 100% Crit: <input id="adminForceCrit" type="checkbox" /></div>
 									<div style="display:flex;gap:8px;justify-content:flex-end">
 										<button id="adminSetMoney" style="background:#10b981;color:#fff;padding:6px 10px;border:0;border-radius:6px">Set Money</button>
 										<button id="adminSetLevel" style="background:#f59e0b;color:#fff;padding:6px 10px;border:0;border-radius:6px">Set Level</button>
@@ -72,11 +73,13 @@
 
 		<!-- Settings panel (fixed bottom-right) -->
 		<div id="settingsContainer" style="position:fixed;right:12px;bottom:12px;z-index:1300;text-align:right">
-			<button id="settingsToggle" style="padding:8px 12px;border-radius:8px;border:0;background:linear-gradient(90deg,var(--xmas-red),var(--xmas-green));color:#fff;font-weight:700;cursor:pointer">Settings ▾</button>
+			<button id="settingsToggle" style="padding:8px 12px;border-radius:8px;border:0;color:#fff;font-weight:700;cursor:pointer">Settings ▾</button>
 			<div id="settingsMenu" class="settings-panel" aria-hidden="true" style="padding:8px;min-width:180px;position:relative;">
-				<button id="helpBtn" style="display:block;margin-bottom:6px;padding:8px;border-radius:6px;border:0;background:#111827;color:#fff">Help</button>
-				<button id="adminBtn" style="display:block;margin-bottom:6px;padding:8px;border-radius:6px;border:0;background:#111827;color:#fff">Admin</button>
-				<button id="resetBtn" style="display:block;padding:8px;border-radius:6px;border:0;background:#ef4444;color:#fff">Reset Game</button>
+					<button id="helpBtn" style="display:block;margin-bottom:6px;padding:8px;border-radius:6px;border:0;background:#111827;color:#fff">Help</button>
+					<button id="adminBtn" style="display:block;margin-bottom:6px;padding:8px;border-radius:6px;border:0;background:#111827;color:#fff">Admin</button>
+					<button id="themeBtn" style="display:block;margin-bottom:6px;padding:8px;border-radius:6px;border:0;background:#111827;color:#fff">Theme: <span id="themeLabel">Dark</span></button>
+					<button id="soundToggle" style="display:block;margin-bottom:6px;padding:8px;border-radius:6px;border:0;background:#111827;color:#fff">Sounds: Off</button>
+					<button id="resetBtn" style="display:block;padding:8px;border-radius:6px;border:0;background:#ef4444;color:#fff">Reset Game</button>
 			</div>
 		</div>
 
@@ -91,6 +94,18 @@
 				<div style="display:flex;gap:8px;justify-content:flex-end">
 					<button id="resetConfirmCancel" style="padding:8px 12px;border-radius:6px;border:0;background:#374151;color:#fff">Cancel</button>
 					<button id="resetConfirmOk" style="padding:8px 12px;border-radius:6px;border:0;background:#ef4444;color:#fff">Reset</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Theme chooser modal -->
+		<div id="themeModal" aria-hidden="true" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:1450;">
+			<div style="background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);position:fixed;inset:0"></div>
+			<div style="position:relative;z-index:1451;max-width:520px;width:92%;background:var(--panel);padding:18px;border-radius:10px;box-shadow:0 18px 60px rgba(0,0,0,0.6);color:#e6eef8;">
+				<h3 style="margin:0 0 8px 0">Choose Theme</h3>
+				<div id="themeOptions" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+				<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+					<button id="themeClose" style="padding:8px 12px;border-radius:6px;border:0;background:#374151;color:#fff">Close</button>
 				</div>
 			</div>
 		</div>

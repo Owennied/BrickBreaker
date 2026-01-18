@@ -11,7 +11,7 @@ html,body{
 	--xmas-gold: #ffd166;
 	--snow: #ffffff;
 	--panel: rgba(5,12,20,0.88);
-	/* Festive snowy night: soft bokeh + northern-teal gradient */
+	/* Christmas snowy night: soft bokeh + northern-teal gradient */
 	background:
 		radial-gradient(1200px 600px at 10% 8%, rgba(255,255,255,0.04), transparent 10%),
 		radial-gradient(800px 400px at 85% 75%, rgba(255,235,180,0.02), transparent 8%),
@@ -31,8 +31,11 @@ html,body{
 
 #topbar > div{font-weight:600}
 #shop{margin-left:auto}
-#shop button{margin-left:8px;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:linear-gradient(90deg,var(--xmas-red),var(--xmas-green));color:#fff;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,0.45);font-weight:700}
+#shop button{margin-left:8px;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:#111827;color:#fff;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,0.45);font-weight:700}
 #shop button:active{transform:translateY(1px)}
+
+/* Apply Christmas gradient to shop buttons only when default/Christmas theme is active */
+body:not([data-theme]) #shop button{background:linear-gradient(90deg,var(--xmas-red),var(--xmas-green))}
 
 /* Buy dropdown */
 .buy-dropdown{display:inline-block;position:relative}
@@ -87,6 +90,11 @@ html,body{
 #settingsContainer{position:fixed;right:12px;bottom:12px;z-index:1300;text-align:right}
 .settings-panel{background:var(--panel);border-radius:8px;padding:8px;box-shadow:0 12px 40px rgba(0,0,0,0.6);display:none;min-width:180px;border:1px solid rgba(255,255,255,0.03)}
 .settings-panel.show{display:block}
+
+/* Settings toggle button: use neutral background by default; show Christmas gradient only
+   when the Christmas theme is active. */
+#settingsToggle{padding:8px 12px;border-radius:8px;border:0;color:#fff;font-weight:700;cursor:pointer;background:#111827}
+body[data-theme="christmas"] #settingsToggle{background:linear-gradient(90deg,var(--xmas-red),var(--xmas-green))}
 
 /* backdrop for modal help */
 .help-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:24;display:none}
@@ -152,5 +160,31 @@ html,body{
 @media (max-width:900px){
 	#gameCanvas{width:95%;height:auto}
 	#topbar{flex-wrap:wrap}
+}
+
+/* Theme overrides */
+/* light theme removed */
+
+body[data-theme="dark"]{
+	/* darker, high-contrast */
+	--panel: rgba(10,14,20,0.95);
+	--bg-1: #030409;
+	--bg-2: #071016;
+	--xmas-red: #ef4444;
+	--xmas-green: #10b981;
+	--snow: #e6eef8;
+	color: #e6eef8;
+	background: linear-gradient(180deg,#000 0%, #07121a 100%);
+}
+
+body[data-theme="retro"]{
+	--panel: rgba(20,18,10,0.95);
+	--bg-1: #2b230f;
+	--bg-2: #3b2f16;
+	--xmas-red: #ff6b6b;
+	--xmas-green: #9ae66e;
+	--snow: #fff6d6;
+	color: #fff6d6;
+	background: linear-gradient(180deg,#3b2f16 0%, #2b230f 100%);
 }
 
